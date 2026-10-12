@@ -2782,7 +2782,27 @@ function summarizeItems(items, maxCount) {
    - 需用户自行配置 API Key
    ========================================================================= */
 
-/* getAIHeaders(): build request headers with auth */
+/* extractAPIErrorMessage(raw, status): parse API error body (JSON or plain text) into readable message */
+function extractAPIErrorMessage(raw, status) {
+  var msg = '';
+  if (raw) {
+    raw = String(raw).trim();
+    try {
+      var errData = JSON.parse(raw);
+      if (errData.error) msg = errData.error.message || '';
+      else if (errData.message) msg = errData.message;
+    } catch(e) {
+      if (raw.length <= 300) msg = raw; // plain-text errors like "Authentication Fails ..."
+    }
+  }
+  if (!msg) msg = 'HTTP ' + status;
+  if (status === 401 || /authentication|unauthorized/i.test(raw || '')) {
+    msg += '（认证失败：请检查 API Key 是否正确，并且已在设置页点击「保存设置」——只点测试连接不会保存）';
+  }
+  return msg;
+}
+
+/* getAIHeaders(): build request headers with auth (kept for compatibility) */
 function getAIHeaders() {
   var headers = { 'Content-Type': 'application/json' };
   var apiKey = settings.aiApiKey || '';
@@ -2832,8 +2852,7 @@ function testAIConnection() {
           resultEl.innerHTML = '<span style="color:var(--danger)">解析响应失败</span>';
         }
       } else {
-        var errMsg = 'HTTP ' + xhr.status;
-        try { var errData = JSON.parse(xhr.responseText); if (errData.error) errMsg = errData.error.message || errMsg; } catch(e) {}
+        var errMsg = extractAPIErrorMessage(xhr.responseText, xhr.status);
         resultEl.innerHTML = '<span style="color:var(--danger)">连接失败：' + escapeHtml(errMsg) + '</span>';
       }
       btnEl.disabled = false;
@@ -2854,8 +2873,8 @@ function testAIConnection() {
       signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined
     }).then(function(res) {
       if (!res.ok) {
-        return res.json().then(function(errData) {
-          throw new Error((errData.error && errData.error.message) || ('HTTP ' + res.status));
+        return res.text().then(function(raw) {
+          throw new Error(extractAPIErrorMessage(raw, res.status));
         });
       }
       return res.json();
@@ -2941,8 +2960,7 @@ function callAI(prompt, onChunk, onDone, onError) {
         }
         if (fullText) onDone(fullText);
       } else {
-        var errMsg = 'API 返回错误：' + xhr.status;
-        try { var errData = JSON.parse(xhr.responseText); if (errData.error) errMsg = errData.error.message || errMsg; } catch(e) {}
+        var errMsg = extractAPIErrorMessage(xhr.responseText, xhr.status);
         if (onError) onError(new Error(errMsg));
       }
     };
@@ -2957,8 +2975,8 @@ function callAI(prompt, onChunk, onDone, onError) {
       body: requestBody
     }).then(function(res) {
       if (!res.ok) {
-        return res.json().then(function(errData) {
-          throw new Error((errData.error && errData.error.message) || ('API 返回错误：' + res.status));
+        return res.text().then(function(raw) {
+          throw new Error(extractAPIErrorMessage(raw, res.status));
         });
       }
       var reader = res.body.getReader();
@@ -3022,8 +3040,7 @@ function callAISync(prompt) {
             resolve(content || '');
           } catch(e) { reject(new Error('解析响应失败')); }
         } else {
-          var errMsg = 'API 返回错误：' + xhr.status;
-          try { var errData = JSON.parse(xhr.responseText); if (errData.error) errMsg = errData.error.message || errMsg; } catch(e) {}
+          var errMsg = extractAPIErrorMessage(xhr.responseText, xhr.status);
           reject(new Error(errMsg));
         }
       };
@@ -3036,8 +3053,8 @@ function callAISync(prompt) {
         body: requestBody
       }).then(function(res) {
         if (!res.ok) {
-          return res.json().then(function(errData) {
-            throw new Error((errData.error && errData.error.message) || ('API 返回错误：' + res.status));
+          return res.text().then(function(raw) {
+            throw new Error(extractAPIErrorMessage(raw, res.status));
           });
         }
         return res.json();
