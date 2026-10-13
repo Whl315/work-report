@@ -608,13 +608,35 @@ function formatDate(d, fmt) {
 function parseDate(str) {
   if (str instanceof Date) return str;
   if (typeof str === 'string') {
-    // YYYY-MM-DD or YYYY-MM-DD HH:mm
+    str = str.trim();
+    // Support formats: YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD, YYYY年MM月DD日, ISO timestamp, with optional HH:mm
     var parts = str.split(' ');
-    var dateParts = parts[0].split('-').map(Number);
+    var dateStr = parts[0];
+    // Normalize separators to '-'
+    var normalized = dateStr.replace(/[\/\.年月]/g, '-').replace(/日/g, '');
+    var dateParts = normalized.split('-').map(Number);
     var timeParts = parts[1] ? parts[1].split(':').map(Number) : [0, 0];
-    return new Date(dateParts[0], dateParts[1] - 1, dateParts[2], timeParts[0] || 0, timeParts[1] || 0);
+    if (dateParts.length >= 3 && !isNaN(dateParts[0]) && !isNaN(dateParts[1]) && !isNaN(dateParts[2])) {
+      return new Date(dateParts[0], dateParts[1] - 1, dateParts[2], timeParts[0] || 0, timeParts[1] || 0);
+    }
+    // Fallback: ISO timestamp (e.g. 2026-10-13T09:00:00.000Z)
+    var d = new Date(str);
+    if (!isNaN(d)) return d;
   }
   return new Date(str);
+}
+
+/* normalizeDate(str): converts various date formats to YYYY-MM-DD */
+function normalizeDate(str) {
+  if (!str) return '';
+  str = String(str).trim();
+  var m = str.match(/(\d{4})[\/\.\-年月](\d{1,2})[\/\.\-月](\d{1,2})日?/);
+  if (m) {
+    var mm = ('0' + m[2]).slice(-2);
+    var dd = ('0' + m[3]).slice(-2);
+    return m[1] + '-' + mm + '-' + dd;
+  }
+  return str;
 }
 
 function getWeekNumber(d) {
@@ -1879,7 +1901,7 @@ function exportAllReportsWord() {
     '.section .content{font-size:14px;white-space:pre-wrap;color:#333}' +
     '.footer{font-size:13px;color:#999;border-top:1px solid #eee;padding-top:8px;margin-top:16px}' +
     '.page-break{page-break-after:always;border:none;border-top:1px dashed #ccc;margin:30px 0}</style></head><body>';
-  var sorted = reports.slice().sort(function(a, b) { return (b.date || '').localeCompare(a.date || ''); });
+  var sorted = reports.slice().sort(function(a, b) { return parseDate(b.date) - parseDate(a.date); });
   sorted.forEach(function(r, idx) {
     if (idx > 0) html += '<hr class="page-break">';
     var tpl = getTemplate(r.templateId) || { icon: '📄' };
@@ -2235,15 +2257,25 @@ function doImport() {
         return;
       }
       if (mode === 'replace') {
-        reports = data.reports;
+        reports = data.reports.map(function(r) {
+          if (r.date) r.date = normalizeDate(r.date);
+          return r;
+        });
         if (data.templates) templates = data.templates;
         if (data.settings) settings = data.settings;
         if (data.meetings) meetings = data.meetings;
       } else {
         // Merge: add reports that don't have the same id
         var existingIds = reports.map(function(r) { return r.id; });
+        var added = 0;
         data.reports.forEach(function(r) {
-          if (existingIds.indexOf(r.id) < 0) reports.push(r);
+          if (existingIds.indexOf(r.id) < 0) {
+            // Normalize date format to YYYY-MM-DD for consistent sorting
+            if (r.date) r.date = normalizeDate(r.date);
+            reports.push(r);
+            existingIds.push(r.id);
+            added++;
+          }
         });
         // Merge templates
         if (data.templates) {
@@ -2631,7 +2663,7 @@ function getDefaultTitle(type, range) {
 /* collectDailyReports(startDate, endDate): returns sorted array of daily reports in range */
 function collectDailyReports(startDate, endDate) {
   return reports.filter(function(r) {
-    return r.type === 'daily' && r.date >= startDate && r.date <= endDate;
+    return r.type === 'daily' && parseDate(r.date) >= parseDate(startDate) && parseDate(r.date) <= parseDate(endDate);
   }).sort(function(a, b) {
     return parseDate(a.date) - parseDate(b.date);
   });
@@ -3742,7 +3774,7 @@ function checkReminders() {
   if (now.getDay() === 5 && hour >= 17) {
     var weekRange = getWeekRange(now);
     var hasWeekly = reports.some(function(r) {
-      return r.type === 'weekly' && r.date >= dateStr(weekRange.start) && r.date <= dateStr(weekRange.end);
+      return r.type === 'weekly' && parseDate(r.date) >= parseDate(dateStr(weekRange.start)) && parseDate(r.date) <= parseDate(dateStr(weekRange.end));
     });
     if (!hasWeekly) {
       pendingReminders.push({ type: 'weekly', msg: '本周周报还没写，周末前完成总结吧！' });
